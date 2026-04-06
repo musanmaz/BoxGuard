@@ -1,0 +1,24 @@
+# Binary
+/boxguard
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+*.out
+
+# Dependency directories
+vendor/
+
+# Vagrant local state
+.vagrant/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
