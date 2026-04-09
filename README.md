@@ -1,62 +1,140 @@
-# BoxGuard — Vagrant Box Vulnerability Scanner
+# BoxGuard
 
-BoxGuard scans Vagrant boxes and systems reachable over SSH to help surface security issues.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev/dl/)
+
+**Inventory Linux packages over SSH, then match them against [OSV.dev](https://osv.dev/), Ubuntu USN, and local stub rules — from a single CLI.**
+
+BoxGuard targets **Vagrant-managed machines** (it reads `vagrant ssh-config`) or **any host** you can reach with SSH and a private key. Use it for quick security posture checks on dev boxes, CI images, or lab VMs.
+
+---
+
+## Contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [CLI reference](#cli-reference)
+- [Output](#sample-output)
+- [Data sources](#data-sources)
+- [Local test environment](#local-test-environment-vagrant)
+- [Project layout](#project-layout)
+- [Security notes](#security-notes)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Features
 
-- **OS detection**: Automatic OS identification (Ubuntu, Debian, RHEL, CentOS, Rocky Linux, AlmaLinux)
-- **Package inventory**: Enumerates installed packages on the target
-- **Real CVE integration**: CVE data via OSV.dev and Ubuntu USN feeds
-- **Hybrid matching**: Combines real CVE data with stub rules for broader coverage
-- **Multiple output formats**: Table and JSON reporting
+| Area | What BoxGuard does |
+|------|-------------------|
+| **Discovery** | Reads `/etc/os-release`, lists packages via `dpkg-query` or `rpm` |
+| **Matching** | OSV queries for curated packages, Ubuntu USN RSS on Ubuntu, plus stub fallbacks |
+| **Reporting** | Human-readable **table** or machine-readable **JSON** (`-o json`) |
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[Vagrant or SSH config] --> B[SSH session]
+  B --> C[OS + package inventory]
+  C --> D[Hybrid matcher]
+  D --> E[OSV.dev]
+  D --> F[Ubuntu USN]
+  D --> G[Stub rules]
+  D --> H[Table or JSON report]
+```
+
+Each scan run uses a **2-minute** overall timeout (see `cmd/scan.go`).
+
+---
 
 ## Requirements
 
-Go 1.22 or later (see [`go.mod`](go.mod)).
+| Tool | Notes |
+|------|--------|
+| **Go** | 1.22+ ([`go.mod`](go.mod)) |
+| **Target** | Linux with SSH; key-based auth as configured in code |
+| **Vagrant** | Optional — only if you use `--vagrant-path` |
+
+The bundled [`Vagrantfile`](Vagrantfile) uses the **Docker** provider and Ubuntu 18.04 for local CVE regression demos (pinned packages). Adjust for your environment.
+
+---
 
 ## Install
 
 ```bash
+git clone <repository-url> boxguard
+cd boxguard
 go mod tidy
 go build -o boxguard .
 ```
 
-## Usage
-
-### Scan a Vagrant box
+Or use the [`Makefile`](Makefile):
 
 ```bash
-# Using the Vagrantfile in the current directory (with test packages)
+make build    # produces ./boxguard
+make test     # go test ./...
+```
+
+---
+
+## Usage
+
+### Vagrant
+
+```bash
 ./boxguard scan --vagrant-path .
 
-# Target a specific machine
+# Named machine (multi-machine Vagrantfile)
 ./boxguard scan --vagrant-path . --vagrant-machine web-server
 ```
 
-### CVE testing
+### Direct SSH
 
 ```bash
-./test-cves.sh
+./boxguard scan \
+  --ssh-host 192.168.1.100 \
+  --ssh-user ubuntu \
+  --ssh-key ~/.ssh/id_rsa
 
-# Recreate the Vagrant box (for CVE test packages)
-vagrant destroy -f && vagrant up
+# Non-default port
+./boxguard scan --ssh-host 10.0.0.5 --ssh-user deploy --ssh-key ~/.ssh/id_ed25519 --ssh-port 2222
 ```
 
-### Scan a remote host over SSH
+### Output format
 
 ```bash
-./boxguard scan --ssh-host 192.168.1.100 --ssh-user ubuntu --ssh-key ~/.ssh/id_rsa
+./boxguard scan --vagrant-path .              # table (default)
+./boxguard scan --vagrant-path . -o json      # JSON
 ```
 
-### Output formats
+Global flags: `-o, --output` (`table` \| `json`), `-v, --verbose`.
 
-```bash
-# Table (default)
-./boxguard scan --vagrant-path .
+---
 
-# JSON
-./boxguard scan --vagrant-path . --output json
-```
+## CLI reference
+
+### `boxguard scan`
+
+| Flag | Description |
+|------|-------------|
+| `--vagrant-path` | Directory containing a `Vagrantfile` |
+| `--vagrant-machine` | Machine name when using multi-machine setups |
+| `--ssh-host` | Remote host (use with `--ssh-user` and `--ssh-key`) |
+| `--ssh-user` | SSH username |
+| `--ssh-key` | Path to private key |
+| `--ssh-port` | SSH port (default: `22`) |
+
+You must specify either **Vagrant** (`--vagrant-path` and/or `--vagrant-machine`) **or** **`--ssh-host`** with user and key.
+
+---
 
 ## Sample output
 
@@ -75,64 +153,65 @@ Stub findings: 0
 OSV findings: 2
 ```
 
+---
+
 ## Data sources
 
-### OSV.dev
+- **[OSV.dev](https://osv.dev/)** — Aggregated advisories (CVE, GHSA, etc.) with CVSS where available.
+- **Ubuntu USN** — RSS feed from Ubuntu security notices (used when `ID=ubuntu` in `/etc/os-release`).
+- **Stub database** — Small in-repo rules for demonstration when live data does not apply.
 
-- Open source vulnerability database
-- CVE, GHSA, and other advisories
-- CVSS scores and detailed metadata
+---
 
-### Ubuntu USN (Ubuntu Security Notices)
+## Local test environment (Vagrant)
 
-- Ubuntu-specific security notices
-- CVE information tailored to Ubuntu packages
+Optional scripts for the Docker-based Ubuntu 18.04 box:
 
-### Stub database
+```bash
+./test-cves.sh
+./debug-scan.sh
+vagrant destroy -f && vagrant up   # rebuild VM
+```
 
-- Simple rule-based fallback when live CVE data is unavailable
+---
 
-## Architecture
+## Project layout
 
 ```
-cmd/
-├── root.go          # Root command and global flags
-└── scan.go          # Scan command
-
-pkg/
-├── inventory/       # Package inventory
-├── model/           # Data models
-├── report/          # Reporting (table, JSON)
-├── sources/         # SSH, Vagrant integration
-└── vuln/            # Vulnerability matching
-    ├── hybrid.go    # Hybrid matcher
-    ├── osv.go       # OSV.dev integration
-    ├── stubdb.go    # Stub rules
-    └── ubuntu_usn.go # Ubuntu USN feed
+cmd/              CLI (Cobra): root + scan
+internal/util/    Version metadata
+pkg/inventory/    OS detection, dpkg/rpm listing
+pkg/model/        Shared structs
+pkg/report/       Table and JSON reporters
+pkg/sources/      Vagrant ssh-config + SSH runner
+pkg/vuln/         Stub DB, OSV, USN, hybrid matcher
 ```
+
+---
+
+## Security notes
+
+- SSH host keys are **not** verified by default (`InsecureIgnoreHostKey` in the SSH client). Use only in trusted networks or extend the client for host key pinning / `known_hosts`.
+- Matching uses **heuristics** (package names, simple version compare). Treat output as **indicative**, not a substitute for full VM image scanning or distro security teams’ guidance.
+
+---
 
 ## Development
 
-### Adding a vulnerability source
+**Add a vulnerability source:** implement logic under `pkg/vuln/`, then integrate with `HybridMatcher` in [`pkg/vuln/hybrid.go`](pkg/vuln/hybrid.go).
 
-1. Add a new file under `pkg/vuln/`
-2. Implement the `Advisory` workflow used by the matcher
-3. Wire it into `HybridMatcher`
+**Add OS support:** extend [`pkg/inventory/`](pkg/inventory/) for detection and package listing, and adjust OSV ecosystem mapping in [`pkg/vuln/osv.go`](pkg/vuln/osv.go) if needed.
 
-### Adding a new OS
-
-1. Extend OS detection under `pkg/inventory/`
-2. Implement package listing for that OS
-3. Update ecosystem mapping for OSV/USN as needed
+---
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Fork the repo and create a branch (`feature/…` or `fix/…`).
+2. Run `make test` (or `go test ./...`).
+3. Open a Pull Request with a clear description of behavior changes.
+
+---
 
 ## License
 
-This project is licensed under the MIT License — see [`LICENSE`](LICENSE).
+Released under the [MIT License](LICENSE).
